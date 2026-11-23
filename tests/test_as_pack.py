@@ -27,7 +27,15 @@ pytestmark = [
 ]
 
 
-def test_installs_as_a_pack(tmp_path) -> None:
+@pytest.fixture
+def as_on_a_server(monkeypatch):
+    """A BlueNode server does not have this repository on its path (pytest puts it there for the tests)."""
+    monkeypatch.setattr(sys, "path", [p for p in sys.path if Path(p or ".").resolve() != REPO])
+    for name in [m for m in sys.modules if m.split(".")[0] in ("bluenode_apple_home", "homekit_bridge", "homekit_accessories")]:
+        monkeypatch.delitem(sys.modules, name)
+
+
+def test_installs_as_a_pack(tmp_path, as_on_a_server) -> None:
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True, text=True, check=True).stdout.strip()
     project = tmp_path / "project"
     project.mkdir()
@@ -38,7 +46,7 @@ def test_installs_as_a_pack(tmp_path) -> None:
             assert r.status_code == 200, r.text
             p = r.json()
             assert p["commit"] == head
-            assert p["ok"], [f for f in p["files"] if not f["ok"]]
+            assert p["ok"], [(f["file"], f["problems"]) for f in p["files"] if not f["ok"]]
             assert p["requirements"] == ["HAP-python<6,>=5.2"]
             assert p["package"] == "bluenode_apple_home"
             assert sorted(f["file"] for f in p["files"]) == ["homekit_accessories.py", "homekit_bridge.py"]
