@@ -1,13 +1,13 @@
 # BlueNode — Apple Home
 
-HomeKit nodes for [BlueNode](../BlueNode): BlueNode becomes a bridge in the **Home** app, and each
+HomeKit nodes for BlueNode: BlueNode becomes a bridge in the **Home** app, and each
 accessory node is an accessory you can see, control with Siri and use in Home automations. Your home hub
 (Apple TV, HomePod or iPad) keeps it reachable when you are away.
 
 ## Install
 
-In BlueNode: **Manage palette** › **Install** › *From git*, give this repository's address (a path on the
-server works too, e.g. `/home/me/Projects/bluenode-apple-home`), check the preview (the code, and the Python
+In BlueNode: **Manage palette** › **Install** › *From git*, give this repository's address,
+`https://github.com/XNinety9/bluenode-apple-home` (a path to a local clone works too), check the preview (the code, and the Python
 packages it installs: HAP-python and what it needs), then **Install**. The nodes appear in the palette's
 **Home** category.
 
