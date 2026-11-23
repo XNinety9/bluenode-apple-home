@@ -53,6 +53,21 @@ Every accessory node also takes a dict of its HomeKit characteristic names (`{"O
 Output messages carry `msg.characteristic`, `msg.value` (the raw HomeKit value) and `msg.source = "homekit"`;
 what the flow sends in never comes back out. A payload of the wrong shape is a node error (Catch node).
 
+## Example flows
+
+`examples/apple-home.yaml` is a flow tab to try every node with the Home app: a bridge, a switch, a
+temperature sensor with a battery, a button with three presses, a door contact, a motion sensor, a
+dimmable light, a blind / a lock / a garage door that answer what Home asks after a delay, a thermostat,
+a fan and an air purifier (generic node). What Home asks shows in the **From Home** Debug node.
+
+After installing the pack, copy the file into the project's `flows/` folder and restart BlueNode:
+
+```bash
+cp examples/apple-home.yaml <project>/flows/
+```
+
+Then pair the bridge (see above) and play with the inject buttons and the Home app.
+
 ## Troubleshooting
 
 - **The bridge does not show in the Home app**: same network? Docker on the host network? A firewall

@@ -1,0 +1,326 @@
+id: apple-home
+label: Apple Home
+nodes:
+# ---- The bridge: pair it once in the Home app with the code shown under it
+- id: ah-bridge
+  type: homekit-bridge
+  x: 0
+  y: -160
+  config:
+    name: BlueNode
+    port: 51826
+  wires: []
+
+# ---- 1. A switch: toggle it in Home (Debug shows it), or from here (Home shows it)
+- id: ah-switch-on
+  type: inject
+  x: 0
+  y: 0
+  config:
+    name: switch on
+    payload: 'true'
+  wires: [[ah-switch]]
+- id: ah-switch-off
+  type: inject
+  x: 0
+  y: 60
+  config:
+    name: switch off
+    payload: 'false'
+  wires: [[ah-switch]]
+- id: ah-switch
+  type: homekit-switch
+  x: 240
+  y: 30
+  config:
+    name: Desk lamp
+  wires: [[ah-debug]]
+  uses:
+    bridge: ah-bridge
+
+# ---- 2. A temperature sensor: a reading every 30 s (made up here; an MQTT in in real life)
+- id: ah-temp-tick
+  type: inject
+  x: 0
+  y: 160
+  config:
+    name: every 30 s
+    repeat: interval
+    interval: 30
+    once: true
+  wires: [[ah-temp-value]]
+- id: ah-temp-value
+  type: template
+  x: 240
+  y: 160
+  config:
+    name: 18–24 °C
+    template: '{{ range(180, 240) | random / 10 }}'
+  wires: [[ah-temp]]
+- id: ah-temp
+  type: homekit-temperature
+  x: 480
+  y: 160
+  config:
+    name: Living room
+    battery: true
+  wires: [[]]
+  uses:
+    bridge: ah-bridge
+- id: ah-battery
+  type: inject
+  x: 240
+  y: 220
+  config:
+    name: battery 15 %
+    payload: '{"BatteryLevel": 15, "StatusLowBattery": 1}'
+  wires: [[ah-temp]]
+
+# ---- 3. A button: set what each press does in Home (accessory › settings), then press here
+- id: ah-press-single
+  type: inject
+  x: 0
+  y: 320
+  config:
+    name: single press
+    payload: single
+  wires: [[ah-button]]
+- id: ah-press-double
+  type: inject
+  x: 0
+  y: 380
+  config:
+    name: double press
+    payload: double
+  wires: [[ah-button]]
+- id: ah-press-long
+  type: inject
+  x: 0
+  y: 440
+  config:
+    name: long press
+    payload: long
+  wires: [[ah-button]]
+- id: ah-button
+  type: homekit-button
+  x: 240
+  y: 380
+  config:
+    name: Scene button
+  wires: [[]]
+  uses:
+    bridge: ah-bridge
+
+# ---- 4. Door contact and motion: Home can notify you of each
+- id: ah-door-open
+  type: inject
+  x: 0
+  y: 540
+  config:
+    name: door opens
+    payload: 'false'
+  wires: [[ah-door]]
+- id: ah-door-closed
+  type: inject
+  x: 0
+  y: 600
+  config:
+    name: door closes
+    payload: 'true'
+  wires: [[ah-door]]
+- id: ah-door
+  type: homekit-contact
+  x: 240
+  y: 570
+  config:
+    name: Front door
+  wires: [[]]
+  uses:
+    bridge: ah-bridge
+- id: ah-motion-seen
+  type: inject
+  x: 0
+  y: 680
+  config:
+    name: motion
+    payload: 'true'
+  wires: [[ah-motion, ah-motion-wait]]
+- id: ah-motion-wait
+  type: delay
+  x: 240
+  y: 720
+  config:
+    name: 10 s later
+    seconds: 10
+  wires: [[ah-motion-clear]]
+- id: ah-motion-clear
+  type: change
+  x: 480
+  y: 720
+  config:
+    name: no motion
+    to: 'false'
+  wires: [[ah-motion]]
+- id: ah-motion
+  type: homekit-motion
+  x: 720
+  y: 680
+  config:
+    name: Hallway
+  wires: [[]]
+  uses:
+    bridge: ah-bridge
+
+# ---- 5. A dimmable, tunable light: what Home asks comes out (Debug)
+- id: ah-light
+  type: homekit-light
+  x: 240
+  y: 820
+  config:
+    name: Ceiling light
+    brightness: true
+    color_temperature: true
+  wires: [[ah-debug]]
+  uses:
+    bridge: ah-bridge
+- id: ah-light-evening
+  type: inject
+  x: 0
+  y: 820
+  config:
+    name: evening mood
+    payload: '{"on": true, "brightness": 30, "color_temperature": 450}'
+  wires: [[ah-light]]
+
+# ---- 6. Devices that take time: the flow answers what Home asked once it is "done"
+# Blind: Home asks a position, the blind "moves" 3 s, then reports it
+- id: ah-blind
+  type: homekit-window-covering
+  x: 240
+  y: 960
+  config:
+    name: Bedroom blind
+  wires: [[ah-blind-move]]
+  uses:
+    bridge: ah-bridge
+- id: ah-blind-move
+  type: delay
+  x: 480
+  y: 960
+  config:
+    name: moving 3 s
+    seconds: 3
+  wires: [[ah-blind]]
+# Lock: Home asks lock / unlock, the lock confirms 1 s later
+- id: ah-lock
+  type: homekit-lock
+  x: 240
+  y: 1060
+  config:
+    name: Front door lock
+  wires: [[ah-lock-turn]]
+  uses:
+    bridge: ah-bridge
+- id: ah-lock-turn
+  type: delay
+  x: 480
+  y: 1060
+  config:
+    name: turning 1 s
+    seconds: 1
+  wires: [[ah-lock]]
+# Garage door: "opening" / "closing" at once, then "open" / "closed" 5 s later
+- id: ah-garage
+  type: homekit-garage-door
+  x: 240
+  y: 1160
+  config:
+    name: Garage
+  wires: [[ah-garage-which, ah-garage-done]]
+  uses:
+    bridge: ah-bridge
+- id: ah-garage-which
+  type: switch
+  x: 480
+  y: 1120
+  config:
+    name: opening?
+    operator: ==
+    value: open
+  wires: [[ah-garage-opening], [ah-garage-closing]]
+- id: ah-garage-opening
+  type: change
+  x: 720
+  y: 1100
+  config:
+    name: opening
+    to: opening
+  wires: [[ah-garage]]
+- id: ah-garage-closing
+  type: change
+  x: 720
+  y: 1160
+  config:
+    name: closing
+    to: closing
+  wires: [[ah-garage]]
+- id: ah-garage-done
+  type: delay
+  x: 480
+  y: 1220
+  config:
+    name: moving 5 s
+    seconds: 5
+  wires: [[ah-garage]]
+
+# ---- 7. A thermostat: Home sets the target and the mode; the flow gives the room temperature
+- id: ah-thermostat
+  type: homekit-thermostat
+  x: 240
+  y: 1320
+  config:
+    name: Heating
+  wires: [[ah-debug]]
+  uses:
+    bridge: ah-bridge
+- id: ah-thermostat-room
+  type: inject
+  x: 0
+  y: 1320
+  config:
+    name: room 19.5 °C, heating
+    payload: '{"current": 19.5, "target": 21, "mode": "heat"}'
+    once: true
+  wires: [[ah-thermostat]]
+
+# ---- 8. A fan, and anything else (an air purifier through the generic node)
+- id: ah-fan
+  type: homekit-fan
+  x: 240
+  y: 1440
+  config:
+    name: Desk fan
+  wires: [[ah-debug]]
+  uses:
+    bridge: ah-bridge
+- id: ah-purifier
+  type: homekit-accessory
+  x: 240
+  y: 1520
+  config:
+    name: Air purifier
+    service: AirPurifier
+    characteristics: RotationSpeed
+  wires: [[ah-debug]]
+  uses:
+    bridge: ah-bridge
+
+# ---- What Home asks, in one place
+- id: ah-debug
+  type: debug
+  x: 1000
+  y: 400
+  config:
+    name: From Home
+    output: msg
+  wires: []
