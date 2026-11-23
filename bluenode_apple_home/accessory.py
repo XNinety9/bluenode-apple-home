@@ -48,6 +48,16 @@ def as_number(value: Any) -> float:
     raise ValueError(f"expected a number, got {value!r}")
 
 
+def friendly(payload: Any, keys: dict[str, str], what: str) -> dict[str, Any]:
+    """A dict of friendly keys (`{"on": true, "brightness": 40}`) → characteristic names. ValueError on others."""
+    if not isinstance(payload, dict):
+        raise ValueError(f"expected {what}, got {payload!r}")
+    unknown = [str(k) for k in payload if k not in keys]
+    if unknown:
+        raise ValueError(f"{', '.join(unknown)}: not a setting of this accessory (it takes {', '.join(keys)})")
+    return {keys[k]: v for k, v in payload.items()}
+
+
 def as_choice(value: Any, choices: dict[str, int], what: str) -> int:
     key = str(value).strip().lower()
     if key not in choices:
@@ -73,6 +83,7 @@ class AccessoryNode(Node):
 
     acc: Accessory | None = None
     _host: Any = None
+    _error: str | None = None  # why there is no accessory (shown in the status, raised on messages)
 
     # ---- what subclasses change
 
@@ -98,9 +109,18 @@ class AccessoryNode(Node):
 
     # ---- life
 
+    def check(self) -> str | None:
+        """Why this node cannot make its accessory (its config), or None."""
+        return None
+
     async def on_start(self) -> None:
+        self._error = self.check()
+        if self._error:
+            self.status("red", self._error)
+            return
         host = getattr(self.server("bridge"), "host", None)
         if host is None or host.bridge is None:
+            self._error = NO_BRIDGE
             self.status("red", NO_BRIDGE)
             return
         self._host = host
@@ -157,7 +177,7 @@ class AccessoryNode(Node):
 
     async def on_message(self, msg: Msg, send: SendFn) -> None:
         if self.acc is None:
-            raise RuntimeError(NO_BRIDGE)
+            raise RuntimeError(self._error or NO_BRIDGE)
         payload = msg.get("payload")
         if isinstance(payload, dict) and payload and all(isinstance(k, str) and self._char(k) is not None for k in payload):
             values = payload

@@ -120,3 +120,97 @@ async def test_accessory_is_on_the_bridge_with_its_name(wire, bridge) -> None:
     assert info.get_characteristic("Manufacturer").value == "Acme"
     await h.node.on_stop()
     assert h.node.acc.aid in bridge.host.bridge.accessories  # leaves only after the linger delay
+
+
+# ---- stateful accessories
+
+
+async def home_writes(h, name, value, service=None):
+    h.sent.clear()
+    char(h, name, service).client_update_value(value)
+    await asyncio.sleep(0.05)
+    assert len(h.sent) == 1, h.sent
+    return h.sent[0][1]
+
+
+async def test_light_simple_and_dict(wire) -> None:
+    h = await wire(hk.Light, {"brightness": True, "color_temperature": True, "color": True})
+    await h.input({"payload": True})
+    assert char(h, "On").value is True
+    await h.input({"payload": {"on": False, "brightness": 40, "color_temperature": 300, "hue": 120, "saturation": 50}})
+    assert (char(h, "On").value, char(h, "Brightness").value, char(h, "ColorTemperature").value) == (False, 40, 300)
+    assert (char(h, "Hue").value, char(h, "Saturation").value) == (120, 50)
+    msg = await home_writes(h, "Brightness", 75)
+    assert msg["payload"] == {"brightness": 75} and msg["characteristic"] == "Brightness"
+    msg = await home_writes(h, "On", True)
+    assert msg["payload"] == {"on": True}
+
+
+async def test_light_without_colour_refuses_hue(wire) -> None:
+    h = await wire(hk.Light, {"brightness": True})
+    assert char(h, "Brightness") is not None
+    with pytest.raises(ValueError, match="hue"):
+        await h.node.on_message({"payload": {"hue": 10}}, h.node.send)
+
+
+async def test_window_covering(wire) -> None:
+    h = await wire(hk.WindowCovering)
+    await h.input({"payload": 30})
+    assert (char(h, "CurrentPosition").value, char(h, "TargetPosition").value, char(h, "PositionState").value) == (30, 30, 2)
+    assert (await home_writes(h, "TargetPosition", 80))["payload"] == 80
+
+
+async def test_thermostat(wire) -> None:
+    h = await wire(hk.Thermostat)
+    await h.input({"payload": {"current": 19.5, "target": 21, "mode": "heat"}})
+    assert char(h, "CurrentTemperature").value == 19.5
+    assert char(h, "TargetTemperature").value == 21
+    assert char(h, "TargetHeatingCoolingState").value == 1
+    assert char(h, "CurrentHeatingCoolingState").value == 1
+    assert (await home_writes(h, "TargetTemperature", 22.5))["payload"] == {"target": 22.5}
+    assert (await home_writes(h, "TargetHeatingCoolingState", 3))["payload"] == {"mode": "auto"}
+    with pytest.raises(ValueError, match="off, heat, cool or auto"):
+        await h.node.on_message({"payload": {"mode": "warm"}}, h.node.send)
+
+
+async def test_lock(wire) -> None:
+    h = await wire(hk.Lock)
+    await h.input({"payload": True})
+    assert (char(h, "LockCurrentState").value, char(h, "LockTargetState").value) == (1, 1)
+    assert (await home_writes(h, "LockTargetState", 0))["payload"] is False
+
+
+async def test_garage_door(wire) -> None:
+    h = await wire(hk.GarageDoor)
+    await h.input({"payload": "open"})
+    assert (char(h, "CurrentDoorState").value, char(h, "TargetDoorState").value) == (0, 0)
+    await h.input({"payload": "closing"})
+    assert (char(h, "CurrentDoorState").value, char(h, "TargetDoorState").value) == (3, 1)
+    assert (await home_writes(h, "TargetDoorState", 0))["payload"] == "open"
+    with pytest.raises(ValueError, match="open, closed"):
+        await h.node.on_message({"payload": "ajar"}, h.node.send)
+
+
+async def test_fan(wire) -> None:
+    h = await wire(hk.Fan)
+    await h.input({"payload": {"on": True, "speed": 60}})
+    assert (char(h, "Active").value, char(h, "RotationSpeed").value) == (1, 60)
+    await h.input({"payload": False})
+    assert char(h, "Active").value == 0
+    assert (await home_writes(h, "RotationSpeed", 30))["payload"] == {"speed": 30}
+    assert (await home_writes(h, "Active", 1))["payload"] == {"on": True}
+
+
+async def test_generic_accessory(wire) -> None:
+    h = await wire(hk.AnyAccessory, {"service": "AirPurifier", "characteristics": "RotationSpeed, LockPhysicalControls"})
+    await h.input({"payload": {"Active": 1, "RotationSpeed": 20}})
+    assert char(h, "RotationSpeed").value == 20
+    msg = await home_writes(h, "Active", 0)
+    assert msg["payload"] == {"Active": 0}
+
+
+async def test_generic_unknown_service(wire) -> None:
+    h = await wire(hk.AnyAccessory, {"service": "Teleporter"})
+    assert h.status["color"] == "red" and "Teleporter" in h.status["text"]
+    with pytest.raises(RuntimeError):
+        await h.node.on_message({"payload": {"On": True}}, h.node.send)
