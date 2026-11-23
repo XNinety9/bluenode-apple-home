@@ -29,7 +29,7 @@ COMMON = """
 - **Battery** — adds a battery: send `{"BatteryLevel": 80, "StatusLowBattery": 0}`.
 
 Wire the **bridge** port to a HomeKit bridge node. Any message whose payload is a dict of HomeKit
-characteristic names (e.g. `{"StatusActive": false}`) sets them as they are. A payload of the wrong shape is
+characteristic names of the accessory (e.g. `{"On": true}` on a switch) sets them as they are. A payload of the wrong shape is
 an error (catch it with a Catch node); nothing is sent to the Home app then.
 """
 

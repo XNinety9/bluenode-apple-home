@@ -214,3 +214,10 @@ async def test_generic_unknown_service(wire) -> None:
     assert h.status["color"] == "red" and "Teleporter" in h.status["text"]
     with pytest.raises(RuntimeError):
         await h.node.on_message({"payload": {"On": True}}, h.node.send)
+
+
+async def test_help_example_dict_is_accepted(wire) -> None:
+    assert '{"On": true}' in hk.COMMON
+    h = await wire(hk.Switch)
+    await h.input({"payload": {"On": True}})
+    assert char(h, "On").value is True

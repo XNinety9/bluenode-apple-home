@@ -66,11 +66,6 @@ class _Driver(AccessoryDriver):
         return result
 
 
-def _shape(acc: Accessory) -> list[tuple[str, tuple[str, ...]]]:
-    """The services and characteristics of an accessory: what Home caches."""
-    return sorted((s.display_name, tuple(sorted(c.display_name for c in s.characteristics))) for s in acc.services)
-
-
 class BridgeHost:
     def __init__(
         self,
@@ -94,6 +89,7 @@ class BridgeHost:
         self._on_status = on_status or (lambda _c, _t: None)
         self.pincode = ""
         self.aids: dict[str, int] = {}
+        self.next_aid = 2  # never reused: a controller that missed a removal must not see another accessory there
         self.driver: _Driver | None = None
         self.bridge: Bridge | None = None
         self.started = False
@@ -116,6 +112,8 @@ class BridgeHost:
             data = {}
         aids = data.get("aids") if isinstance(data, dict) else None
         self.aids = {str(k): int(v) for k, v in aids.items()} if isinstance(aids, dict) else {}
+        stored_next = data.get("next_aid") if isinstance(data, dict) else None
+        self.next_aid = max([stored_next if isinstance(stored_next, int) else 2, 2, *(a + 1 for a in self.aids.values())])
         stored = data.get("pincode") if isinstance(data, dict) else None
         self.pincode = self._wanted_pincode or (stored if isinstance(stored, str) and PINCODE_RE.match(stored) else "")
         if not self.pincode:
@@ -124,8 +122,10 @@ class BridgeHost:
     def _save_ids(self) -> None:
         self.folder.mkdir(parents=True, exist_ok=True)
         tmp = self.ids_file.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps({"pincode": self.pincode, "aids": self.aids}, indent=1))
-        _private(tmp)
+        tmp.unlink(missing_ok=True)
+        fd = os.open(tmp, os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)  # private from the first byte: it holds the code
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps({"pincode": self.pincode, "aids": self.aids, "next_aid": self.next_aid}, indent=1))
         tmp.replace(self.ids_file)
 
     # ---- life
@@ -156,18 +156,48 @@ class BridgeHost:
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self._ready.wait(), self.settle)
         assert self.driver is not None
+        # accessories of last time that did not come back are gone (removed while BlueNode was stopped)
+        gone = [node_id for node_id in self.aids if node_id not in self._attached]
+        for node_id in gone:
+            del self.aids[node_id]
+        if gone:
+            self._save_ids()
         try:
             await self.driver.async_start()
-        except OSError as exc:
-            text = f"port {self.port} in use" if exc.errno == errno.EADDRINUSE else f"cannot start: {exc}"
-            log.warning("HomeKit bridge %s: %s", self.name, text)
+        except Exception as exc:  # noqa: BLE001 - shown under the node
+            await self._cleanup_failed_start()
+            if isinstance(exc, OSError) and exc.errno == errno.EADDRINUSE:
+                text = f"port {self.port} in use"
+                log.warning("HomeKit bridge %s: %s", self.name, text)
+            else:
+                text = f"cannot start: {exc}"
+                log.exception("HomeKit bridge %s", self.name)
             self._on_status("red", text)
             return
-        except Exception as exc:  # noqa: BLE001 - shown under the node
-            log.exception("HomeKit bridge %s", self.name)
-            self._on_status("red", f"cannot start: {exc}")
-            return
         self.started = True
+        self._report()
+
+    async def _cleanup_failed_start(self) -> None:
+        """A start that failed half-way (mDNS after the server was listening): give the port back."""
+        driver = self.driver
+        if driver is None:
+            return
+        if getattr(driver.http_server, "server", None) is not None:
+            with contextlib.suppress(Exception):
+                driver.http_server.async_stop()
+        if driver.advertiser is not None:
+            with contextlib.suppress(Exception):
+                await driver.advertiser.async_close()
+            driver.advertiser = None
+
+    def _sync_config(self) -> None:
+        """When what Home caches changed (accessories, services, characteristics, their ids), tell it."""
+        if not self.started or self.driver is None:
+            return
+        current = self.driver.accessories_hash
+        if self.driver.state.accessories_hash != current:
+            self.driver.state.accessories_hash = current
+            self.driver.config_changed()
         self._report()
 
     async def stop(self) -> None:
@@ -206,7 +236,9 @@ class BridgeHost:
 
     def _new_aid(self) -> int:
         used = set(self.aids.values())
-        return next(aid for aid in range(2, 1 << 31) if aid != 7 and aid not in used)  # HAP-python skips 7
+        aid = next(a for a in range(self.next_aid, 1 << 31) if a != 7 and a not in used)  # HAP-python skips 7
+        self.next_aid = aid + 1
+        return aid
 
     def attach(self, node_id: str, factory: Callable[[AccessoryDriver, int], Accessory]) -> Accessory:
         """Put the accessory of node `node_id` on the bridge (with the id it had before) and return it."""
@@ -226,9 +258,7 @@ class BridgeHost:
             self.bridge.accessories.pop(aid, None)
         self.bridge.add_accessory(acc)
         self._attached[node_id] = acc
-        if self.started and (new_aid or old is None or _shape(old) != _shape(acc)):
-            self.driver.config_changed()
-            self._report()
+        self._sync_config()
         self._check_ready()
         return acc
 
@@ -246,14 +276,14 @@ class BridgeHost:
         self.bridge.accessories.pop(acc.aid, None)
         self.aids.pop(node_id, None)
         self._save_ids()
-        if self.started:
-            self.driver.config_changed()
-            self._report()
+        self._sync_config()
 
 
 def _copy_values(old: Accessory, new: Accessory) -> None:
     """Keep what Home showed (a light's brightness…) when a node restarts with an accessory of the same kind."""
     for service in new.services:
+        if service.display_name == "AccessoryInformation":
+            continue  # the name, model… come from the node's new config
         before = old.get_service(service.display_name)
         if before is None:
             continue

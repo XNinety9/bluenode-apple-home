@@ -48,7 +48,7 @@ rooms, names and automations survive restarts and redeploys.
 | Fan | `true` / `false`, or `{on, speed}` | `{on}` / `{speed}` |
 | HomeKit accessory | `{"<Characteristic>": value}` for any HomeKit service | `{"<Characteristic>": value}` |
 
-Every accessory node also takes a dict of HomeKit characteristic names (`{"StatusActive": false}`), and has
+Every accessory node also takes a dict of its HomeKit characteristic names (`{"On": true}` on a switch), and has
 **Manufacturer**, **Model** and **Battery** options (with Battery: `{"BatteryLevel": 80, "StatusLowBattery": 0}`).
 Output messages carry `msg.characteristic`, `msg.value` (the raw HomeKit value) and `msg.source = "homekit"`;
 what the flow sends in never comes back out. A payload of the wrong shape is a node error (Catch node).

@@ -186,3 +186,93 @@ async def test_status_says_code_until_paired(tmp_path) -> None:
     await wait_for(lambda: h.started)
     assert seen[-1] == ("yellow", f"not paired — code {h.pincode}")
     await h.stop()
+
+
+# ---- review fixes
+
+
+def named(name: str, model: str):
+    def factory(driver, aid):
+        acc = Accessory(driver, name, aid=aid)
+        acc.set_info_service(model=model)
+        acc.add_preload_service("Switch")
+        return acc
+
+    return factory
+
+
+def purifier(chars):
+    def factory(driver, aid):
+        acc = Accessory(driver, "Purifier", aid=aid)
+        acc.add_preload_service("AirPurifier", chars=chars)
+        return acc
+
+    return factory
+
+
+async def test_rename_on_redeploy_reaches_home(host) -> None:
+    await wait_for(lambda: host.started)
+    host.attach("n1", named("Old", "X1"))
+    host.detach("n1")
+    acc = host.attach("n1", named("New", "X2"))
+    info = acc.get_service("AccessoryInformation")
+    assert (info.get_characteristic("Name").value, info.get_characteristic("Model").value) == ("New", "X2")
+
+
+async def test_reordered_characteristics_change_config(host, monkeypatch) -> None:
+    await wait_for(lambda: host.started)
+    host.attach("n1", purifier(["RotationSpeed", "LockPhysicalControls"]))
+    calls = []
+    monkeypatch.setattr(host.driver, "config_changed", lambda: calls.append(1))
+    host.detach("n1")
+    host.attach("n1", purifier(["LockPhysicalControls", "RotationSpeed"]))
+    assert calls == [1]  # the iids moved: Home must fetch the accessories again
+
+
+async def test_failed_start_frees_the_port(tmp_path, monkeypatch) -> None:
+    import pyhap.accessory_driver as driver_module
+
+    def broken(*_args, **_kwargs):
+        raise OSError("no multicast")
+
+    port = free_port()
+    seen = []
+    monkeypatch.setattr(driver_module, "AsyncZeroconf", broken)
+    a = BridgeHost("A", tmp_path / "a", "b1", port, None, advertise=True, settle=0, on_status=lambda c, t: seen.append((c, t)))
+    await a.start()
+    await wait_for(lambda: seen and seen[-1][0] == "red")
+    await a.stop()
+    monkeypatch.undo()
+    b = BridgeHost("B", tmp_path / "b", "b1", port, None, advertise=False, settle=0)
+    await b.start()
+    await wait_for(lambda: b.started)  # the port was given back
+    await b.stop()
+
+
+async def test_accessories_gone_while_stopped_are_forgotten(tmp_path) -> None:
+    a = BridgeHost("T", tmp_path, "b1", 0, None, advertise=False, settle=0)
+    await a.start()
+    a.attach("n1", switch())
+    a.attach("n2", switch())
+    await a.stop()
+    b = BridgeHost("T", tmp_path, "b1", 0, None, advertise=False, settle=0.2)
+    await b.start()
+    b.attach("n1", switch())
+    await wait_for(lambda: b.started)
+    assert json.loads((tmp_path / "b1.json").read_text())["aids"] == {"n1": 2}
+    await b.stop()
+
+
+async def test_aids_are_never_reused(tmp_path) -> None:
+    h = BridgeHost("T", tmp_path, "b1", 0, None, advertise=False, settle=0, linger=0.05)
+    await h.start()
+    h.attach("n1", switch())
+    h.attach("n2", switch())  # aid 3
+    h.detach("n2")
+    await wait_for(lambda: "n2" not in h.aids)
+    assert h.attach("n3", switch()).aid == 4
+    await h.stop()
+    again = BridgeHost("T", tmp_path, "b1", 0, None, advertise=False, settle=0)
+    await again.start()
+    assert again.attach("n4", switch()).aid == 5
+    await again.stop()
